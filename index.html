@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سينما الأصدقاء - النسخة الذكية 🍿💬</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #0b0b0f; color: #e2e8f0; margin: 0; padding: 15px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 550px; background: #15151e; padding: 15px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); box-sizing: border-box; }
+        .panel { background: #1f1f2e; padding: 12px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #2d2d44; }
+        input, button { padding: 10px; border-radius: 8px; border: none; font-size: 14px; margin: 4px 0; box-sizing: border-box; }
+        input { background: #2a2a3d; color: white; width: 100%; border: 1px solid #3f3f5c; }
+        .btn-main { background-color: #e50914; color: white; cursor: pointer; font-weight: bold; width: 100%; }
+        
+        /* حاوية الفيديو والقفل */
+        .video-wrapper { position: relative; width: 100%; padding-bottom: 56.25%; background: #000; border-radius: 12px; overflow: hidden; }
+        .video-wrapper iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; }
+        .video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        .video-overlay.locked { pointer-events: auto; }
+
+        /* الزر الذكي الموحد */
+        .controls-box { background: #1f1f2e; padding: 12px; border-radius: 12px; margin-top: 10px; border: 1px solid #2d2d44; text-align: center; }
+        .btn-toggle { background: #e50914; color: white; border: none; padding: 15px 40px; border-radius: 50px; font-size: 28px; cursor: pointer; transition: 0.3s; width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; margin: 10px auto; }
+        .btn-toggle:active { transform: scale(0.9); }
+        
+        /* شريط المشاهدة */
+        .timeline-container { display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 10px; }
+        .time-label { font-size: 12px; font-family: monospace; color: #94a3b8; }
+        .custom-timeline { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 3px; background: #475569; outline: none; }
+        .custom-timeline::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: #e50914; cursor: pointer; }
+
+        /* الشات */
+        .chat-box { background: #1f1f2e; border-radius: 12px; margin-top: 15px; border: 1px solid #2d2d44; overflow: hidden; display: flex; flex-direction: column; }
+        .chat-messages { height: 120px; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #111116; }
+        .msg { padding: 6px 10px; border-radius: 8px; max-width: 80%; font-size: 13px; }
+        .msg.me { background: #3b82f6; align-self: flex-start; }
+        .msg.friend { background: #2a2a3d; align-self: flex-end; }
+        .chat-input-row { display: flex; padding: 5px; gap: 5px; }
+
+        .peer-id-text { background: #0b0b0f; padding: 8px; border-radius: 6px; color: #f59e0b; font-family: monospace; text-align: center; font-size: 12px; cursor: pointer; border: 1px dashed #f59e0b; }
+    </style>
+</head>
+<body>
+
+    <h1>🍿 سينما الأصدقاء</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <input type="text" id="ytUrl" placeholder="رابط يوتيوب هنا...">
+            <button class="btn-main" onclick="changeVideo()">تحديث الفيديو 🔄</button>
+            <div id="my-id" class="peer-id-text" onclick="navigator.clipboard.writeText(this.innerText); alert('تم نسخ الكود!');">جاري التجهيز...</div>
+            <div style="display:flex; gap:5px;">
+                <input type="text" id="friend-id" placeholder="كود الصديق...">
+                <button onclick="connectToFriend()" style="background:#3b82f6; color:white;">اتصال</button>
+            </div>
+        </div>
+
+        <div class="video-wrapper">
+            <div id="overlay" class="video-overlay"></div>
+            <div id="player"></div>
+        </div>
+
+        <div class="controls-box">
+            <div class="timeline-container">
+                <span id="currentTime" class="time-label">00:00</span>
+                <input type="range" id="timeline" class="custom-timeline" min="0" max="100" value="0" oninput="timelineDragged(this.value)">
+                <span id="duration" class="time-label">00:00</span>
+            </div>
+            <button id="toggleBtn" class="btn-toggle" onclick="togglePlay()">▶</button>
+        </div>
+
+        <div class="chat-box">
+            <div id="chatMessages" class="chat-messages"></div>
+            <div class="chat-input-row">
+                <input type="text" id="chatInput" placeholder="اكتب لرفيقك..." onkeypress="if(event.key === 'Enter') sendChatMessage()">
+                <button onclick="sendChatMessage()" style="background:#10b981; color:white;">إرسال</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let player;
+        let peer = new Peer();
+        let conn = null;
+        let isPlaying = false;
+        let isRemoteAction = false;
+        const overlay = document.getElementById('overlay');
+        const toggleBtn = document.getElementById('toggleBtn');
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '100%', width: '100%',
+                videoId: 'EdhzTQD7hnU',
+                playerVars: { 'controls': 1, 'rel': 0 },
+                events: { 'onReady': onPlayerReady }
+            });
+        }
+
+        function onPlayerReady() {
+            // المراقبة الذكية كل 100 مللي ثانية
+            setInterval(() => {
+                if (!player || isRemoteAction) return;
+                const state = player.getPlayerState();
+                
+                // حالة التشغيل في يوتيوب (1)
+                if (state === 1 && !isPlaying) {
+                    updateUI(true);
+                    sendSignal({ type: 'play', time: player.getCurrentTime() });
+                } 
+                // حالة الإيقاف في يوتيوب (2)
+                else if (state === 2 && isPlaying) {
+                    updateUI(false);
+                    sendSignal({ type: 'pause', time: player.getCurrentTime() });
+                }
+                updateTimeline();
+            }, 100);
+        }
+
+        function togglePlay() {
+            if (isPlaying) {
+                player.pauseVideo();
+            } else {
+                player.playVideo();
+            }
+            // التحديث سيتم تلقائياً عبر "المراقب" بالأعلى
+        }
+
+        function updateUI(play) {
+            isPlaying = play;
+            toggleBtn.textContent = play ? '⏸' : '▶';
+            if (play) overlay.classList.add('locked');
+            else overlay.classList.remove('locked');
+        }
+
+        function updateTimeline() {
+            if (player && player.getDuration) {
+                const cur = player.getCurrentTime();
+                const dur = player.getDuration();
+                document.getElementById('timeline').value = (cur / dur) * 100 || 0;
+                document.getElementById('currentTime').textContent = formatTime(cur);
+                document.getElementById('duration').textContent = formatTime(dur);
+            }
+        }
+
+        function formatTime(s) {
+            let m = Math.floor(s / 60); s = Math.floor(s % 60);
+            return (m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+        }
+
+        peer.on('open', (id) => { document.getElementById('my-id').textContent = id; });
+        peer.on('connection', (c) => { conn = c; setupSync(); });
+
+        function connectToFriend() {
+            conn = peer.connect(document.getElementById('friend-id').value.trim());
+            setupSync();
+        }
+
+        function setupSync() {
+            conn.on('data', (data) => {
+                if (data.type === 'chat') { appendMessage(data.text, 'friend'); return; }
+                
+                isRemoteAction = true; // منع اللوب
+                if (data.type === 'play') {
+                    player.seekTo(data.time, true);
+                    player.playVideo();
+                    updateUI(true);
+                } else if (data.type === 'pause') {
+                    player.pauseVideo();
+                    player.seekTo(data.time, true);
+                    updateUI(false);
+                } else if (data.type === 'change') {
+                    player.loadVideoById(data.id);
+                } else if (data.type === 'seek') {
+                    player.seekTo(data.time, true);
+                }
+                setTimeout(() => { isRemoteAction = false; }, 500);
+            });
+        }
+
+        function sendSignal(data) {
+            if (conn && conn.open) conn.send(data);
+        }
+
+        function timelineDragged(v) {
+            if (!player) return;
+            const target = (v / 100) * player.getDuration();
+            player.seekTo(target, true);
+            sendSignal({ type: 'seek', time: target });
+        }
+
+        function sendChatMessage() {
+            const val = document.getElementById('chatInput').value;
+            if (!val) return;
+            appendMessage(val, 'me');
+            sendSignal({ type: 'chat', text: val });
+            document.getElementById('chatInput').value = '';
+        }
+
+        function appendMessage(t, s) {
+            const d = document.createElement('div');
+            d.className = 'msg ' + s;
+            d.textContent = t;
+            const box = document.getElementById('chatMessages');
+            box.appendChild(d);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function changeVideo() {
+            const url = document.getElementById('ytUrl').value;
+            const match = url.match(/[?&]v=([^&#]+)/);
+            const id = match ? match[1] : url;
+            if (id.length === 11) {
+                player.loadVideoById(id);
+                sendSignal({ type: 'change', id: id });
+            }
+        }
+    </script>
+</body>
+</html>
